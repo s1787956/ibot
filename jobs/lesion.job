@@ -1,0 +1,19 @@
+#!/bin/bash
+
+#SBATCH --nodes=2
+#SBATCH --tasks-per-node=1
+#SBATCH --cpus-per-task=48
+#SBATCH --time=2:00:00
+#SBATCH --account=mundi-ai
+#SBATCH --mem-per-gpu=128G
+#SBATCH --job-name=SSL-ibot-lesion
+#SBATCH --partition=develbooster
+#SBATCH --mail-type=end
+#SBATCH --gres=gpu:4
+#SBATCH --output=lesion-SSL-ibot-%j.out
+
+cd /p/scratch/mundi-ai/code/ibot
+#export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/p/software/juwelsbooster/stages/2024/software/Python/3.11.3-GCCcore-12.3.0/lib
+module load Python/3.11.3
+source /p/scratch/mundi-ai/dl/bin/activate
+torchrun_jsc --nproc_per_node=4 --nnodes 2 main_ibot.py --arch vit_base --output_dir ibot-dl-vit-b-lc-8 --lr 0.0001 --local_crops_number 8 --batch_size_per_gpu 92 --data_path /p/scratch/mundi-ai/DeepLesion --load_from /p/scratch/mundi-ai/code/ibot/ibot-dl-vit-b-lc-8/checkpoint.pth
