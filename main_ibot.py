@@ -6,7 +6,12 @@
 
 import argparse
 import os
+from os.path import exists
 import sys
+import shutil
+#sys.path.append("../")
+#sys.path.append("../VMamba")
+#from VMamba.classification.models.vmamba import VSSM
 import datetime
 import time
 import math
@@ -35,7 +40,7 @@ def get_args_parser():
     # Model parameters
     parser.add_argument('--arch', default='vit_small', type=str,
         choices=['vit_tiny', 'vit_small', 'vit_base', 'vit_large', 'deit_tiny', 'deit_small',
-                 'swin_tiny','swin_small', 'swin_base', 'swin_large'],
+                 'swin_tiny','swin_small', 'swin_base', 'swin_large', 'vmamba'],
         help="""Name of architecture to train. For quick experiments with ViTs,
         we recommend using vit_tiny or vit_small.""")
     parser.add_argument('--patch_size', default=16, type=int, help="""Size in pixels
@@ -83,9 +88,9 @@ def get_args_parser():
     parser.add_argument('--warmup_teacher_temp', default=0.04, type=float,
         help="""Initial value for the teacher temperature: 0.04 works well in most cases.
         Try decreasing it if the training loss does not decrease.""")
-    parser.add_argument('--teacher_temp', default=0.04, type=float, help="""Final value (after linear warmup)
+    parser.add_argument('--teacher_temp', default=0.4, type=float, help="""Final value (after linear warmup)
         of the teacher temperature. For most experiments, anything above 0.07 is unstable. We recommend
-        starting with the default value of 0.04 and increase this slightly if needed.""")
+        starting with the default value of 0.04 and increase this slightly if needed.""")  # 0.04
     parser.add_argument('--warmup_teacher_patch_temp', default=0.04, type=float, help="""See 
         `--warmup_teacher_temp`""")
     parser.add_argument('--teacher_patch_temp', default=0.07, type=float, help=""""See 
@@ -103,7 +108,7 @@ def get_args_parser():
     parser.add_argument('--weight_decay_end', type=float, default=0.4, help="""Final value of the
         weight decay. We use a cosine schedule for WD and using a larger decay by
         the end of training improves performance for ViTs.""")
-    parser.add_argument('--clip_grad', type=float, default=3.0, help="""Maximal parameter
+    parser.add_argument('--clip_grad', type=float, default=0.3, help="""Maximal parameter
         gradient norm if using gradient clipping. Clipping with norm .3 ~ 1.0 can
         help optimization for larger ViT architectures. 0 for disabling.""")
     parser.add_argument('--batch_size_per_gpu', default=128, type=int,
@@ -127,20 +132,24 @@ def get_args_parser():
     # Multi-crop parameters
     parser.add_argument('--global_crops_number', type=int, default=2, help="""Number of global
         views to generate. Default is to use two global crops. """)
-    parser.add_argument('--global_crops_scale', type=float, nargs='+', default=(0.14, 1.),
+    parser.add_argument('--global_crops_scale', type=float, nargs='+', default=(0.32, 1.),             # (0.14, 1.)
         help="""Scale range of the cropped image before resizing, relatively to the origin image.
         Used for large global view cropping. When disabling multi-crop (--local_crops_number 0), we
         recommand using a wider range of scale ("--global_crops_scale 0.14 1." for example)""")
-    parser.add_argument('--local_crops_number', type=int, default=0, help="""Number of small
+    parser.add_argument('--local_crops_number', type=int, default=10, help="""Number of small
         local views to generate. Set this parameter to 0 to disable multi-crop training.
         When disabling multi-crop we recommend to use "--global_crops_scale 0.14 1." """)
-    parser.add_argument('--local_crops_scale', type=float, nargs='+', default=(0.05, 0.4),
+    parser.add_argument('--local_crops_scale', type=float, nargs='+', default=(0.05, 0.32),            # (0.05, 0.4)
         help="""Scale range of the cropped image before resizing, relatively to the origin image.
         Used for small local view cropping of multi-crop.""")
 
     # Misc
     parser.add_argument('--data_path', default='/path/to/imagenet/train/', type=str,
         help='Please specify path to the ImageNet training data.')
+    parser.add_argument('--cohort', default='LEEDS-ARISTOTLE-CRC-IMGS', type=str,
+        help='Please specify the training cohort.')
+    parser.add_argument('--archive_path', default='/data/horse/ws/s1787956-Leeds/data/tiles', type=str,
+        help='Please specify the archive directory.')
     parser.add_argument('--output_dir', default=".", type=str, help='Path to save logs and checkpoints.')
     parser.add_argument('--saveckp_freq', default=40, type=int, help='Save checkpoint every x epochs.')
     parser.add_argument('--seed', default=0, type=int, help='Random seed.')
@@ -150,6 +159,11 @@ def get_args_parser():
     parser.add_argument("--local_rank", default=0, type=int, help="Please ignore and do not set this argument.")
     return parser
 
+# def build_vmamba(masked_im_modeling=False):
+#     model = VSSM(masked_im_modeling=masked_im_modeling)
+#     model.classifier.head = nn.Identity()
+#     return model
+
 def train_ibot(args):
     utils.init_distributed_mode(args)
     utils.fix_random_seeds(args.seed)
@@ -158,6 +172,20 @@ def train_ibot(args):
     cudnn.benchmark = True
 
     # ============ preparing data ... ============
+    
+    if utils.is_main_process():
+        if not exists(args.data_path):
+            os.makedirs(args.data_path)
+        try:
+            print("Initializing ratarmount....")
+            os.system(f"ratarmount {args.archive_path}/{args.cohort}.tar {args.data_path}/")
+        except Exception as exc:
+            print(exc)
+            args.data_path = os.path.join("/".join(args.data_path.split('/')[:-2]),f"tmp-{np.random.randint(6,420)}","mnt")
+            os.system(f"ratarmount {args.archive_path}/{args.cohort}.tar {args.data_path}/")
+            
+    torch.distributed.barrier()
+    
     transform = DataAugmentationiBOT(
         args.global_crops_scale,
         args.local_crops_scale,
@@ -189,6 +217,10 @@ def train_ibot(args):
     # we changed the name DeiT-S for ViT-S to avoid confusions
     args.arch = args.arch.replace("deit", "vit")
     # if the network is of hierechical features (i.e. swin_tiny, swin_small, swin_base)
+    # if "vmamba" in args.arch:
+    #     student = build_vmamba(masked_im_modeling=args.use_masked_im_modeling)
+    #     teacher = build_vmamba()
+    #     embed_dim = student.num_features
     if args.arch in models.__dict__.keys() and 'swin' in args.arch:
         student = models.__dict__[args.arch](
             window_size=args.window_size,
@@ -264,7 +296,8 @@ def train_ibot(args):
     # there is no backpropagation through the teacher, so no need for gradients
     for p in teacher.parameters():
         p.requires_grad = False
-    print(f"Student and Teacher are built: they are both {args.arch} network.")
+    if utils.is_main_process():
+        print(f"Student and Teacher are built: they are both {args.arch} network.")
 
     # ============ preparing loss ... ============
     same_dim = args.shared_head or args.shared_head_teacher

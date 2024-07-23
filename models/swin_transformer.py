@@ -626,7 +626,6 @@ class SwinTransformer(nn.Module):
         if mask is not None:
             x = self.mask_model(x, mask)
         x = x.flatten(2).transpose(1, 2)
-
         if self.ape:
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)

@@ -1,0 +1,18 @@
+#!/bin/bash
+
+#SBATCH --nodes=1
+#SBATCH --tasks-per-node=1
+#SBATCH --cpus-per-task=40
+#SBATCH --time=96:00:00
+#SBATCH --account=p_scads_pathology
+#SBATCH --mem-per-gpu=120G
+#SBATCH --job-name=SSL-ibot-leeds
+#SBATCH --partition=alpha
+#SBATCH --mail-type=end
+#SBATCH --mail-user=tim.lenz@tu-dresden.de
+#SBATCH --gres=gpu:8
+#SBATCH --output=leeds-SSL-ibot-%j.out
+
+cd /data/horse/ws/s1787956-general/code/ibot
+
+python -m torch.distributed.launch --nproc_per_node=8 --nnodes 1 --use_env main_ibot.py --local_crops_number 8 --arch vit_base --output_dir ibot-leeds-enrol-vit-b --lr 0.0001 --batch_size_per_gpu 90 --data_path /data/horse/ws/s1787956-Leeds/data/tmp-4/mnt --archive_path /data/horse/ws/s1787956-Leeds/data/tiles --cohort LEEDS-ENROL-CRC-IMGS --load_from /data/horse/ws/s1787956-general/code/ibot/ibot-leeds-enrol-vit-b/checkpoint.pth
